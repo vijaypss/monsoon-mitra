@@ -1,15 +1,31 @@
 // Typed API client for the MonsoonMitra backend.
 
-/** Normalize the configured base URL so a malformed env var can't break requests:
- *  - trims stray whitespace/newlines (a common copy-paste mistake in host dashboards)
- *  - drops any trailing slash
- *  - prepends https:// if the scheme was omitted */
+/** Normalize the configured base URL so a malformed env var can't break requests.
+ *  Handles the common host-dashboard copy-paste mistakes:
+ *   - stray whitespace / newlines            → trimmed
+ *   - trailing slashes                       → removed
+ *   - missing scheme ("host.app")            → https:// prepended
+ *   - doubled scheme ("https://https://…")   → collapsed
+ *   - embedded credentials ("user:pass@…")   → stripped (fetch rejects these with
+ *     "URL is not valid or contains user credentials")
+ *   - otherwise-invalid value                → same-origin fallback ("") so the app
+ *     can still work behind a proxy/rewrite instead of throwing.
+ */
 function resolveBase(): string {
-  let base = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || "";
-  if (!base) return "http://localhost:8000"; // dev default
-  base = base.replace(/\/+$/, "");
-  if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
-  return base;
+  let raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || "";
+  if (!raw) return "http://localhost:8000"; // dev default
+  raw = raw.replace(/^(?:https?:\/\/)+/i, (m) => m.match(/https?:\/\//i)![0]);
+  raw = raw.replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(raw)) raw = `https://${raw}`;
+  try {
+    const u = new URL(raw);
+    u.username = "";
+    u.password = "";
+    return u.origin + (u.pathname === "/" ? "" : u.pathname);
+  } catch {
+    console.error("Invalid VITE_API_BASE_URL; falling back to same-origin:", raw);
+    return "";
+  }
 }
 
 const BASE = resolveBase();
@@ -62,18 +78,41 @@ export interface TravelAdvisory {
 }
 export interface ChatResponse { reply: string; language: string; grounded_on: string[]; generated_by: string }
 
+/** Build a request URL safely so a bad path/base can never throw a raw URL error. */
+function makeUrl(path: string): string {
+  return API ? `${API}${path}` : `/api/v1${path.replace(/^\/api\/v1/, "")}`;
+}
+
+function friendlyNetworkError(err: unknown): Error {
+  const msg = err instanceof Error ? err.message : String(err);
+  return new Error(
+    `Could not reach the API${BASE ? ` at ${BASE}` : ""}. ` +
+      `Check the backend is running and VITE_API_BASE_URL is a valid https URL. (${msg})`,
+  );
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(makeUrl(path), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw friendlyNetworkError(err);
+  }
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `Request failed (${res.status})`);
   return res.json();
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API}${path}`);
+  let res: Response;
+  try {
+    res = await fetch(makeUrl(path));
+  } catch (err) {
+    throw friendlyNetworkError(err);
+  }
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   return res.json();
 }
