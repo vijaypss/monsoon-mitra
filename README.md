@@ -36,7 +36,7 @@ MonsoonMitra closes that gap by grounding a large language model in **real forec
 | **Location search (geocoding)** | Type-ahead search for any city/place worldwide via Open-Meteo geocoding (free, keyless); plus browser "use my location". No hardcoded city list. | `GET /api/v1/geocode?q=` |
 | **Personalised preparedness plan** | Generates a household-specific plan from location + household profile (members, dwelling type, floor, medical needs, pets, vehicle) grounded in the live forecast. | `POST /api/v1/plan` |
 | **Weather-aware guidance** | Fetches live + 7-day forecast (Open-Meteo) and derives a monsoon hazard score. | `GET /api/v1/weather` |
-| **Real-time alerts** | Server-derived severity alerts (heavy rain, flooding, lightning, heat) streamed to clients via SSE. | `GET /api/v1/alerts`, `GET /api/v1/alerts/stream` |
+| **Real-time alerts** | Server-derived severity alerts (heavy rain, flooding, lightning, heat). Web client polls every 60s (works on serverless); an SSE stream is also available for streaming-capable hosts. | `GET /api/v1/alerts`, `GET /api/v1/alerts/stream` |
 | **Emergency checklists** | Phase-aware (before / during / after) go-bag and action checklists, tailored + translated. | `POST /api/v1/checklist` |
 | **Travel advisory** | Route/plan risk assessment given origin, destination and timing. | `POST /api/v1/plan/travel` |
 | **Multilingual assistant** | Conversational Q&A grounded in weather + safety KB; answers in 12 Indian languages. | `POST /api/v1/chat` |

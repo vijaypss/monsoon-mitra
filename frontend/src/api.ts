@@ -1,6 +1,18 @@
 // Typed API client for the MonsoonMitra backend.
 
-const BASE = (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:8000";
+/** Normalize the configured base URL so a malformed env var can't break requests:
+ *  - trims stray whitespace/newlines (a common copy-paste mistake in host dashboards)
+ *  - drops any trailing slash
+ *  - prepends https:// if the scheme was omitted */
+function resolveBase(): string {
+  let base = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || "";
+  if (!base) return "http://localhost:8000"; // dev default
+  base = base.replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
+  return base;
+}
+
+const BASE = resolveBase();
 const API = `${BASE}/api/v1`;
 
 export type RiskLevel = "low" | "moderate" | "high" | "severe";
@@ -83,5 +95,4 @@ export const api = {
     post<TravelAdvisory>("/plan/travel", { origin, destination, depart_in_hours, mode, language }),
   chat: (message: string, location: Location | null, language: string) =>
     post<ChatResponse>("/chat", { message, location, language }),
-  alertStreamUrl: (l: Location) => `${API}/alerts/stream?lat=${l.lat}&lon=${l.lon}`,
 };

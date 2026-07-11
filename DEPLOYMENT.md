@@ -195,7 +195,7 @@ In the **backend** project → Settings → Environment Variables, set
 `ALLOWED_ORIGINS = https://<frontend>.vercel.app` → **Redeploy**.
 
 ### Vercel caveats (important)
-- **Real-time alert streaming (SSE) does not work on Vercel serverless** — functions are short-lived and can't hold an open connection. The app **degrades gracefully**: alerts are still fetched on page load and whenever a plan is generated; they just aren't live-pushed. For live push on Vercel, switch the client to short-polling `/api/v1/alerts` (ask and I'll wire it up), or host the backend on Render (Section 2) where SSE works.
+- **Alerts use polling, so they work on Vercel.** The web client refreshes `/api/v1/alerts` every 60s (no long-lived connection needed). The backend still exposes an SSE endpoint (`/api/v1/alerts/stream`) for hosts that support streaming, like Render — it's simply unused by the web client.
 - **Function timeout:** free tier caps duration (`maxDuration` set to 30s in `vercel.json`); Groq calls normally finish in a few seconds.
 - **Cold starts** on first request after idle, similar to Render.
 - **No shared cache** across serverless invocations (in-memory cache is per-instance); fine functionally, or add `REDIS_URL` (e.g. Upstash free) for a shared cache.

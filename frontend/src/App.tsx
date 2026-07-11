@@ -56,22 +56,26 @@ export default function App() {
     );
   }, []);
 
-  // Real-time alerts via SSE; re-subscribes whenever the chosen location changes.
+  // Near-real-time alerts via resilient polling. Works everywhere — including
+  // serverless hosts (Vercel) where long-lived SSE connections are not available.
   useEffect(() => {
     if (!location) return;
-    api.alerts(location).then(setAlerts).catch(() => {});
-    const es = new EventSource(api.alertStreamUrl(location));
-    es.addEventListener("alerts", (e) => {
+    let active = true;
+
+    async function refresh() {
       try {
-        const data = JSON.parse((e as MessageEvent).data);
-        const list: Alert[] = Array.isArray(data?.alerts) ? data.alerts : [];
-        setAlerts(list);
-        const severe = list.find((a) => a.severity === "severe" || a.severity === "high");
+        const list = await api.alerts(location as Location);
+        if (!active) return;
+        const safe: Alert[] = Array.isArray(list) ? list : [];
+        setAlerts(safe);
+        const severe = safe.find((a) => a.severity === "severe" || a.severity === "high");
         if (severe) setBanner(`⚠ ${severe.title}`);
-      } catch { /* ignore malformed frame */ }
-    });
-    es.onerror = () => es.close();
-    return () => es.close();
+      } catch { /* upstream/network hiccup — keep last known alerts */ }
+    }
+
+    refresh();
+    const id = window.setInterval(refresh, 60_000); // refresh every 60s
+    return () => { active = false; window.clearInterval(id); };
   }, [location]);
 
   async function generatePlan() {
