@@ -179,12 +179,13 @@ export function WeatherCard({ w }: { w: WeatherSnapshot }) {
 
 export function AlertsPanel({ alerts }: { alerts: Alert[] }) {
   const { t } = useTranslation();
-  if (alerts.length === 0)
+  const list = Array.isArray(alerts) ? alerts : [];
+  if (list.length === 0)
     return <Card title={t("alerts")}><p className="text-sm text-slate-500">{t("noAlerts")}</p></Card>;
   return (
-    <Card title={`${t("alerts")} (${alerts.length})`}>
+    <Card title={`${t("alerts")} (${list.length})`}>
       <ul className="space-y-3">
-        {alerts.map((a) => (
+        {list.map((a) => (
           <li key={a.id} className={`rounded-xl border p-3 ${RISK_STYLES[a.severity]}`}>
             <div className="flex items-center justify-between">
               <span className="font-semibold">{a.title}</span>

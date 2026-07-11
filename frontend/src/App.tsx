@@ -64,8 +64,9 @@ export default function App() {
     es.addEventListener("alerts", (e) => {
       try {
         const data = JSON.parse((e as MessageEvent).data);
-        setAlerts(data.alerts);
-        const severe = (data.alerts as Alert[]).find((a) => a.severity === "severe" || a.severity === "high");
+        const list: Alert[] = Array.isArray(data?.alerts) ? data.alerts : [];
+        setAlerts(list);
+        const severe = list.find((a) => a.severity === "severe" || a.severity === "high");
         if (severe) setBanner(`⚠ ${severe.title}`);
       } catch { /* ignore malformed frame */ }
     });
@@ -78,7 +79,7 @@ export default function App() {
     setLoading(true); setError(null);
     try {
       const res = await api.plan(location, household, language);
-      setPlan(res); setAlerts(res.alerts);
+      setPlan(res); setAlerts(Array.isArray(res.alerts) ? res.alerts : []);
     } catch (e) { setError((e as Error).message); }
     finally { setLoading(false); }
   }
