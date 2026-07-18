@@ -1,10 +1,38 @@
-# MonsoonMitra — Install & Deploy Guide
+# MonsoonMitra — Install & Deployment Guide
 
-Two parts:
-1. **[Run locally](#1-run-locally)** — three ways (Docker, manual, or backend-only).
-2. **[Deploy on a free tier](#2-deploy-on-a-free-tier)** — backend on Render (free), frontend on Vercel/Netlify/Cloudflare/Render (free).
+Covers running locally and deploying to a **free tier**. Read the box below first — nearly every deployment problem traces back to it.
 
-Everything the app depends on has a real free tier: **Groq** (LLM), **Open-Meteo** (weather, no key), and static + small-service hosting.
+---
+
+## ⚠ The two variables that matter
+
+MonsoonMitra deploys as **two separate applications**: a **backend** (FastAPI) and a **frontend** (static React SPA). They talk over HTTPS, so each must be told about the other. Miss either and the app loads but nothing works.
+
+| Set on | Variable | Value | Why |
+|---|---|---|---|
+| **Frontend** | `VITE_API_BASE_URL` | Backend origin, e.g. `https://monsoon-api.vercel.app` | Tells the SPA where the API lives |
+| **Backend** | `ALLOWED_ORIGINS` | Frontend origin, e.g. `https://monsoon-web.vercel.app` | CORS — the browser blocks the calls otherwise |
+
+**Three rules that trip people up:**
+
+1. **`VITE_API_BASE_URL` is baked in at build time.** Setting it without a **redeploy** does nothing. Any change ⇒ redeploy the frontend.
+2. **Both values must be a bare origin**: scheme + host only. No quotes, no angle brackets, no trailing slash, no path.
+   - ✅ `https://monsoon-api.vercel.app`
+   - ❌ `"https://monsoon-api.vercel.app"` · `<https://monsoon-api.vercel.app>` · `https://monsoon-api.vercel.app/` · `https://monsoon-api.vercel.app/api/v1`
+3. **They point at each other, not at themselves.** The frontend's `VITE_API_BASE_URL` must be the **backend** URL. Pointing it at the frontend makes the app call itself and silently fail.
+
+> **Self-check built in:** if the frontend cannot reach the API, the app shows an amber banner at the top with the raw configured value, the URL it actually called, and the underlying error. Trust that banner — it tells you which of the above is wrong.
+
+---
+
+## Contents
+- [Prerequisites](#prerequisites)
+- [1. Run locally](#1-run-locally)
+- [2. Deploy on Vercel (frontend + backend)](#2-deploy-on-vercel-frontend--backend)
+- [3. Alternative: Render backend + static frontend](#3-alternative-render-backend--static-frontend)
+- [4. Post-deploy verification](#4-post-deploy-verification)
+- [5. Troubleshooting](#5-troubleshooting)
+- [6. Free-tier notes](#6-free-tier-notes)
 
 ---
 
@@ -12,46 +40,39 @@ Everything the app depends on has a real free tier: **Groq** (LLM), **Open-Meteo
 
 | Tool | Version | Needed for |
 |---|---|---|
-| Python | 3.10+ | backend |
+| Python | **3.10+** (3.11 recommended) | backend |
 | Node.js | 18+ (20 recommended) | frontend |
-| Docker + Docker Compose | any recent | the one-command path (optional) |
-| Git | any | cloning / deploying |
-| A **free Groq API key** | — | live AI text (optional — app runs without it) |
+| Docker | optional | one-command local run |
+| Git | any | deploying from GitHub |
+| Groq API key | free | live AI text (optional) |
 
-**Get a free Groq key:** sign in at <https://console.groq.com>, open **API Keys → Create API Key**, copy the `gsk_...` value. No card required.
+**Free Groq key:** <https://console.groq.com> → **API Keys → Create API Key** → copy the `gsk_…` value. No card required.
 
-> Without a key the app still runs end-to-end — AI text falls back to built-in templates (English). Weather, alerts, checklists and travel all work fully.
+> Without a key the app still runs end-to-end: weather, alerts, checklists, travel and location search all work, and AI text falls back to built-in English templates.
+
+> **Python 3.9 will not work.** The backend uses modern type syntax. If you use conda, create a dedicated env (`conda create -n monsoon python=3.11`) rather than installing into `base`.
 
 ---
 
 ## 1. Run locally
 
-### Option A — Docker (one command, recommended)
+### Option A — Docker (one command)
 
 ```bash
-git clone <your-repo-url> monsoon-mitra
-cd monsoon-mitra
-cp .env.example .env
-#   edit .env → set GROQ_API_KEY=gsk_...   (leave blank to use template mode)
+cp .env.example .env      # then set GROQ_API_KEY=gsk_...  (optional)
 docker compose up --build
 ```
 
-Open:
-- Web app → <http://localhost:5173>
-- API docs (Swagger) → <http://localhost:8000/docs>
-- Health → <http://localhost:8000/api/v1/health>
+Frontend → <http://localhost:5173> · API docs → <http://localhost:8000/docs>
 
-Stop with `Ctrl-C`, or `docker compose down`.
-
-### Option B — Manual (no Docker)
+### Option B — No Docker
 
 **Backend (terminal 1):**
 ```bash
 cd backend
-python -m venv .venv
-source .venv/bin/activate            # Windows: .venv\Scripts\activate
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-export GROQ_API_KEY=gsk_...          # optional; Windows: set GROQ_API_KEY=...
+export GROQ_API_KEY=gsk_...                          # optional
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -59,189 +80,171 @@ uvicorn app.main:app --reload --port 8000
 ```bash
 cd frontend
 npm install
-# point the SPA at your local API:
 echo "VITE_API_BASE_URL=http://localhost:8000" > .env.local
 npm run dev
 ```
 
-Open <http://localhost:5173>.
-
-### Option C — Backend only (API / integration)
-
-```bash
-cd backend && pip install -r requirements.txt
-uvicorn app.main:app --port 8000
-# then:
-curl -X POST localhost:8000/api/v1/plan -H 'Content-Type: application/json' -d '{
-  "location": {"lat":19.076,"lon":72.877,"name":"Mumbai"},
-  "household": {"adults":2,"children":1,"seniors":1,"dwelling":"apartment",
-                "floor":0,"medical_needs":["diabetes"],"has_vehicle":true,"pets":1},
-  "language": "hi"
-}'
-```
-
-### Handy shortcuts (Makefile)
-
-```bash
-make install   # install backend + frontend deps
-make test      # run backend tests
-make lint      # ruff
-make up        # docker compose up --build
-```
+Locally, CORS already allows `http://localhost:5173` by default, so no extra config is needed.
 
 ---
 
-## 2. Deploy on a free tier
+## 2. Deploy on Vercel (frontend + backend)
 
-Architecture in production = **two deployables**:
+You create **two Vercel projects from the same repository**, differing only by **Root Directory**. The repo already contains everything needed: `backend/api/index.py` (ASGI serverless entrypoint), `backend/vercel.json`, and `frontend/vercel.json`.
 
-```
-[ Static frontend ]  ──HTTPS──►  [ FastAPI backend ]  ──►  Groq + Open-Meteo
-  Vercel/Netlify/                  Render free web
-  Cloudflare/Render                service
-```
-
-You deploy the **backend first** (to get its URL), then the **frontend** (pointed at that URL), then set **CORS** on the backend back to the frontend URL. Do them in that order.
-
-### Step 1 — Push your code to GitHub
+### Step 0 — Push to GitHub
 
 ```bash
 git init && git add . && git commit -m "MonsoonMitra"
-git branch -M main
 git remote add origin https://github.com/<you>/monsoon-mitra.git
 git push -u origin main
 ```
 
-`.env` is git-ignored — your key never leaves your machine. You'll set it as a secret in the dashboard instead.
+`.env` is git-ignored — secrets go in the Vercel dashboard, never in the repo.
 
-### Step 2 — Deploy the backend on Render (free)
+### Step 1 — Backend project
 
-Render's free web service needs **no credit card** and gives **750 instance-hours/month**. Note: free services **sleep after ~15 min idle** and take ~1 min to wake on the next request (fine for a demo/pilot).
-
-**Fastest path — Blueprint (uses the included `render.yaml`):**
-1. Go to <https://dashboard.render.com> → **New → Blueprint**.
-2. Connect your GitHub repo. Render reads `render.yaml` and proposes **both** the API and the static site.
-3. When prompted, set the secret **`GROQ_API_KEY`** = your `gsk_...` (leave other vars as-is for now).
-4. Click **Apply**. Wait for the API to go live at `https://monsoon-mitra-api.onrender.com`.
-
-**Manual path (no blueprint):**
-1. **New → Web Service** → pick the repo.
-2. Settings:
-   - **Root Directory:** `backend`
-   - **Runtime:** Python
-   - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-   - **Health Check Path:** `/api/v1/health`
-   - **Instance Type:** Free
-3. **Environment** → add:
-   | Key | Value |
-   |---|---|
-   | `APP_ENV` | `production` |
-   | `GROQ_API_KEY` | `gsk_...` (mark as secret) |
-   | `LLM_MODEL` | `llama-3.3-70b-versatile` |
-   | `RATE_LIMIT` | `30/minute` |
-   | `ALLOWED_ORIGINS` | *(fill in after Step 3)* |
-4. **Create Web Service.** Verify: open `https://<your-api>.onrender.com/api/v1/health` → `{"status":"ok",...}`.
-
-> **Alternative — Hugging Face Spaces (free CPU, Docker):** create a **Docker Space**, push the `backend/` folder, and change the Dockerfile's exposed port to **7860** (`--port 7860`; HF only serves 7860). Free CPU Space is 2 vCPU / 16 GB, sleeps after 48 h idle. Fly.io and Google Cloud Run free tiers also work with the included `backend/Dockerfile`.
-
-### Step 3 — Deploy the frontend (free static hosting)
-
-Pick **one**. Set the env var `VITE_API_BASE_URL` to your backend URL from Step 2 (it's read at build time).
-
-**Vercel** (`frontend/vercel.json` included):
-1. <https://vercel.com> → **Add New → Project** → import the repo.
-2. **Root Directory:** `frontend`. Framework preset: **Vite** (auto).
-3. **Environment Variables:** `VITE_API_BASE_URL = https://<your-api>.onrender.com`
-4. **Deploy** → you get `https://<project>.vercel.app`.
-
-**Netlify** (`frontend/netlify.toml` included):
-1. <https://app.netlify.com> → **Add new site → Import from Git**.
-2. **Base directory:** `frontend` · **Build:** `npm run build` · **Publish:** `frontend/dist`.
-3. **Site settings → Environment variables:** `VITE_API_BASE_URL = https://<your-api>.onrender.com` → **Redeploy**.
-
-**Cloudflare Pages:** Framework preset **Vite**, build `npm run build`, output `dist`, root `frontend`, add the same env var.
-
-**Or Render Static Site:** already defined in `render.yaml` (`monsoon-mitra-web`) — deployed with the blueprint in Step 2. Just set its `VITE_API_BASE_URL`.
-
----
-
-## 2b. Alternative: everything on Vercel (frontend **and** backend)
-
-Vercel runs Python as **serverless functions**, so the backend deploys via the included
-`backend/api/index.py` (ASGI entrypoint) + `backend/vercel.json` (routes all paths to it).
-You create **two Vercel projects from the same repo** — one rooted at `backend`, one at `frontend`.
-
-### A. Backend project (FastAPI serverless)
-1. <https://vercel.com> → **Add New → Project** → import the repo.
-2. **Root Directory:** `backend`. Vercel auto-detects Python from `requirements.txt` + the `api/` folder — leave build/output settings empty.
+1. Vercel → **Add New → Project** → import the repo.
+2. **Root Directory: `backend`.** Vercel auto-detects Python from `requirements.txt` + the `api/` folder. Leave build/output settings empty.
 3. **Environment Variables:**
+
    | Key | Value |
    |---|---|
-   | `GROQ_API_KEY` | `gsk_...` |
+   | `GROQ_API_KEY` | `gsk_…` (mark as secret) |
    | `LLM_MODEL` | `llama-3.3-70b-versatile` |
    | `APP_ENV` | `production` |
-   | `ALLOWED_ORIGINS` | *(fill in after the frontend is live)* |
-4. **Deploy.** Verify: `https://<backend>.vercel.app/api/v1/health` → `{"status":"ok"}`.
 
-### B. Frontend project (static SPA)
-1. **Add New → Project** → same repo again.
-2. **Root Directory:** `frontend` (framework preset **Vite**, auto).
-3. **Environment Variable:** `VITE_API_BASE_URL = https://<backend>.vercel.app`
-4. **Deploy** → `https://<frontend>.vercel.app`.
+   Leave `ALLOWED_ORIGINS` for Step 3 — you need the frontend URL first.
+4. **Deploy.** Note the resulting URL, e.g. `https://monsoon-api.vercel.app`.
+5. **Verify before continuing** — open in a browser:
+   ```
+   https://<backend>.vercel.app/api/v1/health
+   ```
+   Expect `{"status":"ok","llm_enabled":true,...}`. If this doesn't work, no amount of frontend config will help — fix it here first.
 
-### C. CORS
-In the **backend** project → Settings → Environment Variables, set
-`ALLOWED_ORIGINS = https://<frontend>.vercel.app` → **Redeploy**.
+### Step 2 — Frontend project
 
-### Vercel caveats (important)
-- **Alerts use polling, so they work on Vercel.** The web client refreshes `/api/v1/alerts` every 60s (no long-lived connection needed). The backend still exposes an SSE endpoint (`/api/v1/alerts/stream`) for hosts that support streaming, like Render — it's simply unused by the web client.
-- **Function timeout:** free tier caps duration (`maxDuration` set to 30s in `vercel.json`); Groq calls normally finish in a few seconds.
-- **Cold starts** on first request after idle, similar to Render.
-- **No shared cache** across serverless invocations (in-memory cache is per-instance); fine functionally, or add `REDIS_URL` (e.g. Upstash free) for a shared cache.
+1. **Add New → Project** → import the **same repo** again.
+2. **Root Directory: `frontend`** (framework preset **Vite**, auto-detected).
+3. **Environment Variable:**
+   ```
+   VITE_API_BASE_URL = https://<backend>.vercel.app
+   ```
+   Bare origin — see the rules at the top.
+4. **Deploy.** Note the URL, e.g. `https://monsoon-web.vercel.app`.
+
+### Step 3 — Connect them (CORS) and redeploy both
+
+1. **Backend** project → Settings → Environment Variables:
+   ```
+   ALLOWED_ORIGINS = https://<frontend>.vercel.app
+   ```
+2. **Redeploy the backend** (picks up `ALLOWED_ORIGINS`).
+3. **Redeploy the frontend** (bakes in `VITE_API_BASE_URL`).
+
+Both redeploys are required. Open the site — the amber banner should be gone.
 
 ---
 
-### Step 4 — Wire up CORS (important)
+## 3. Alternative: Render backend + static frontend
 
-The browser will block calls until the backend allows the frontend's origin.
+Render supports long-running processes, so the SSE alert stream works there (Vercel is serverless, so the web client uses polling — see [free-tier notes](#6-free-tier-notes)).
 
-1. In Render → your **API service → Environment**, set:
-   ```
-   ALLOWED_ORIGINS = https://<your-frontend-domain>
-   ```
-   (comma-separate if you have several, e.g. a Vercel preview + prod domain). No trailing slash.
-2. Save → the service redeploys automatically.
-3. Reload the frontend and generate a plan. Done. ✅
+**Backend on Render (free web service, no credit card, 750 hrs/month):**
+
+Easiest is the included blueprint — Render → **New → Blueprint** → select the repo (it reads `render.yaml` and creates both services). Or manually:
+
+- **Root Directory:** `backend`
+- **Build:** `pip install -r requirements.txt`
+- **Start:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- **Health Check Path:** `/api/v1/health`
+- **Env:** `GROQ_API_KEY`, `APP_ENV=production`, `ALLOWED_ORIGINS=<frontend origin>`
+
+**Frontend** — deploy `frontend/` to Vercel, Netlify (`netlify.toml` included), Cloudflare Pages, or a Render Static Site. Build `npm run build`, output `dist`, and set `VITE_API_BASE_URL` to the Render backend URL.
+
+The same two-variable rule applies exactly as above.
 
 ---
 
-## Post-deploy checklist
+## 4. Post-deploy verification
 
-- [ ] `GET https://<api>/api/v1/health` returns `"status":"ok"` and shows `"llm_enabled": true` (confirms the Groq key is picked up).
-- [ ] Frontend loads and **Generate my plan** returns a plan (check the browser Network tab — the request should hit your API domain, not localhost).
-- [ ] No CORS errors in the browser console (if there are, re-check `ALLOWED_ORIGINS`).
-- [ ] Switch the language selector — AI output comes back translated.
-- [ ] Docs are reachable at `https://<api>/docs`.
+Work through these in order — each isolates one layer:
 
-## Free-tier limits & tips
+1. **Backend alive:** `https://<backend>/api/v1/health` returns `{"status":"ok"}`.
+2. **AI enabled:** the same response shows `"llm_enabled": true`. If `false`, `GROQ_API_KEY` isn't set on the backend (the app still works using templates).
+3. **Frontend loads** with **no amber banner**. If the banner appears, read it — it names the raw value and the URL actually called.
+4. **Location resolves:** allow location access (or search a city) — the chip under the header shows a real place name and coordinates.
+5. **Plan generates:** click **Generate my plan** and confirm a plan appears.
+6. **Multilingual:** switch the language selector and regenerate — AI content returns in that language.
+7. **No CORS errors** in the browser console (F12).
 
-| Concern | Reality on free tier | Mitigation |
+---
+
+## 5. Troubleshooting
+
+**Amber "Cannot reach the MonsoonMitra API" banner**
+The definitive diagnostic. It prints the raw `VITE_API_BASE_URL`, the URL actually called, and the error.
+- Banner shows `(same origin)` ⇒ the configured value **isn't a valid URL**, so the app fell back to calling itself. Fix the value (quotes/brackets/whitespace are the usual cause) and redeploy the frontend.
+- Banner shows your **frontend** URL ⇒ you pointed `VITE_API_BASE_URL` at the wrong app.
+- Banner shows the correct backend URL ⇒ the backend is down or CORS is wrong. Test the health URL directly.
+
+**Errors like "URL is not valid or contains user credentials" or "The string did not match the expected pattern"**
+Safari/WebKit's way of saying the request URL is malformed — i.e. a bad `VITE_API_BASE_URL`. Safari is stricter than Chrome, so a value that "looks fine" elsewhere can fail here. Use a bare origin and redeploy.
+
+**Location name shows "My location" instead of a place**
+Reverse geocoding couldn't resolve the coordinates. The app falls back to a direct browser lookup, so if you see this alongside the banner, fix connectivity first.
+
+**Plans return English despite choosing another language**
+`llm_enabled` is `false` — the offline template fallback is English-only. Set `GROQ_API_KEY` on the backend and redeploy.
+
+**`SystemError: pydantic-core version incompatible` / `ModuleNotFoundError` locally**
+A mixed Python environment. Create a clean env on **Python 3.11** and reinstall:
+```bash
+conda create -n monsoon python=3.11 -y && conda activate monsoon
+cd backend && pip install -r requirements.txt
+```
+
+**First request after idle is slow**
+Free-tier cold start (Vercel functions and Render free services sleep when idle). Subsequent requests are fast.
+
+**429 responses** — per-IP rate limit hit. Raise `RATE_LIMIT` (default `30/minute`).
+
+---
+
+## 6. Free-tier notes
+
+| Concern | Reality | Mitigation |
 |---|---|---|
-| Backend cold start | Render free sleeps after ~15 min idle (~1 min wake) | Acceptable for pilots; a cron ping or paid instance removes it |
-| Groq rate/quota | Generous free limits, but finite | App auto-falls back to templates on any LLM error — never breaks |
-| Weather calls | Open-Meteo free & keyless | Responses cached server-side (`CACHE_TTL_SECONDS`, default 15 min) |
-| Secrets | Never commit `.env` | Set `GROQ_API_KEY` only in the host's dashboard |
-| Shared cache across replicas | In-memory by default | Set `REDIS_URL` (e.g. Upstash free tier) if you scale to >1 instance |
+| Cold starts | Vercel functions and Render free services sleep when idle | Acceptable for pilots; a cron ping or paid tier removes it |
+| Alert updates | Web client **polls** `/api/v1/alerts` every 60s — works on serverless | Backend also exposes SSE (`/alerts/stream`) for streaming-capable hosts like Render |
+| Function timeout (Vercel) | `maxDuration` set to 30s in `backend/vercel.json` | Groq calls normally finish in a few seconds |
+| Groq quota | Generous free limits, but finite | On any LLM error the app auto-falls back to templates — it never breaks |
+| Weather / geocoding | Open-Meteo + BigDataCloud: free, keyless | Responses cached server-side (`CACHE_TTL_SECONDS`, default 15 min) |
+| Shared cache | In-memory, per-instance | Set `REDIS_URL` (e.g. Upstash free tier) if running multiple instances |
+| Secrets | Never commit `.env` | Set `GROQ_API_KEY` only in the host dashboard |
 
-## Troubleshooting
+### Full environment variable reference
 
-- **CORS error in console** → `ALLOWED_ORIGINS` on the backend must exactly match the frontend origin (scheme + host, no trailing slash).
-- **Frontend calls `localhost:8000` in production** → `VITE_API_BASE_URL` wasn't set at build time; set it and redeploy (it's baked into the build).
-- **`llm_enabled: false` in `/health`** → `GROQ_API_KEY` isn't set on the backend host, or `LLM_PROVIDER=template`.
-- **First request after idle is slow** → free-tier cold start; subsequent requests are fast.
-- **429 responses** → you hit the per-IP rate limit; raise `RATE_LIMIT`.
+**Backend**
+
+| Var | Default | Purpose |
+|---|---|---|
+| `GROQ_API_KEY` | — | Groq key. Empty ⇒ template mode. |
+| `LLM_PROVIDER` | `groq` | `groq` \| `template` |
+| `LLM_MODEL` | `llama-3.3-70b-versatile` | Model id |
+| `ALLOWED_ORIGINS` | `http://localhost:5173` | **CORS allowlist — set to your frontend origin** |
+| `APP_ENV` | `development` | `production` enables HSTS |
+| `RATE_LIMIT` | `30/minute` | Per-IP limit |
+| `CACHE_TTL_SECONDS` | `900` | Weather/AI cache TTL |
+| `REDIS_URL` | — | Optional shared cache |
+| `LOG_LEVEL` | `INFO` | Log verbosity |
+
+**Frontend**
+
+| Var | Purpose |
+|---|---|
+| `VITE_API_BASE_URL` | **Backend origin. Baked in at build time — redeploy after changing.** |
 
 ---
 
-_Reminder: MonsoonMitra is a reference implementation and not a substitute for official IMD/NDMA warnings. In an emergency, call 112._
+_MonsoonMitra is a reference implementation and not a substitute for official IMD/NDMA warnings. In an emergency, call **112**._
