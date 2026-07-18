@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  Alert, api, Household, Location, Phase, PlanResponse,
-  ChecklistItem, TravelAdvisory, ChatResponse,
+  Alert, api, API_BASE, Household, Location, Phase, PlanResponse,
+  ChecklistItem, TravelAdvisory, ChatResponse, resolvePlaceName,
 } from "./api";
 import {
   AlertsPanel, Card, ChecklistView, LocationSearch, PlanView, Spinner, TravelResult, WeatherCard,
@@ -33,6 +33,15 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+  const [apiDown, setApiDown] = useState<string | null>(null);
+
+  // Verify backend connectivity up front so misconfiguration is obvious
+  // immediately instead of surfacing later as a confusing action failure.
+  useEffect(() => {
+    api.health()
+      .then(() => setApiDown(null))
+      .catch((e: Error) => setApiDown(e.message));
+  }, []);
 
   useEffect(() => { i18n.changeLanguage(language === "hi" ? "hi" : "en"); }, [language, i18n]);
 
@@ -44,12 +53,8 @@ export default function App() {
       async (pos) => {
         const lat = +pos.coords.latitude.toFixed(4);
         const lon = +pos.coords.longitude.toFixed(4);
-        let name = "My location";
-        try {
-          const place = await api.reverseGeocode(lat, lon);
-          if (place?.name) name = place.label || place.name;
-        } catch { /* keep fallback */ }
-        setLocation({ lat, lon, name });
+        const place = await resolvePlaceName(lat, lon);
+        setLocation({ lat, lon, name: place || "My location" });
       },
       () => {/* user declined; they can search manually */},
       { enableHighAccuracy: false, timeout: 8000 },
@@ -109,6 +114,24 @@ export default function App() {
         <div className="bg-red-600 px-4 py-2 text-center text-sm font-medium text-white">
           {banner} · {t("emergency")}
           <button className="ml-3 underline" onClick={() => setBanner(null)}>✕</button>
+        </div>
+      )}
+
+      {apiDown && (
+        <div className="border-b border-amber-300 bg-amber-50 px-4 py-3">
+          <div className="mx-auto max-w-5xl text-sm text-amber-900">
+            <p className="font-semibold">⚠ Cannot reach the MonsoonMitra API</p>
+            <p className="mt-1">
+              Requests are going to <code className="rounded bg-amber-100 px-1">{API_BASE}</code>.
+              Weather, alerts, location names and plans will not work until this is fixed.
+            </p>
+            <ul className="mt-2 list-disc space-y-0.5 pl-5">
+              <li>Frontend: set <code>VITE_API_BASE_URL</code> to your backend origin (e.g. <code>https://your-api.vercel.app</code>) and <strong>redeploy</strong> — it is baked in at build time.</li>
+              <li>Backend: set <code>ALLOWED_ORIGINS</code> to this site's origin (<code>{typeof window !== "undefined" ? window.location.origin : ""}</code>) for CORS.</li>
+              <li>Check the backend health endpoint responds: <code>{API_BASE}/api/v1/health</code></li>
+            </ul>
+            <p className="mt-2 text-xs opacity-80">Details: {apiDown}</p>
+          </div>
         </div>
       )}
 

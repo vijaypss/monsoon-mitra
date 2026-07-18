@@ -12,7 +12,9 @@
  *     can still work behind a proxy/rewrite instead of throwing.
  */
 function resolveBase(): string {
-  let raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() || "";
+  // Strip ALL whitespace (not just the ends): pasted values sometimes wrap
+  // across lines in host dashboards. A valid URL never contains raw whitespace.
+  let raw = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\s+/g, "") || "";
   if (!raw) return "http://localhost:8000"; // dev default
   raw = raw.replace(/^(?:https?:\/\/)+/i, (m) => m.match(/https?:\/\//i)![0]);
   raw = raw.replace(/\/+$/, "");
@@ -30,6 +32,9 @@ function resolveBase(): string {
 
 const BASE = resolveBase();
 const API = `${BASE}/api/v1`;
+
+/** The API origin actually in use (shown in the UI when the backend is unreachable). */
+export const API_BASE = BASE || `${typeof location !== "undefined" ? location.origin : ""} (same origin)`;
 
 export type RiskLevel = "low" | "moderate" | "high" | "severe";
 export type Phase = "before" | "during" | "after";
@@ -135,3 +140,31 @@ export const api = {
   chat: (message: string, location: Location | null, language: string) =>
     post<ChatResponse>("/chat", { message, location, language }),
 };
+
+/** Resolve coordinates to a display name.
+ *  Tries our backend first; if that is unreachable, falls back to the same
+ *  free/keyless (CORS-enabled) provider directly from the browser, so the
+ *  user still sees where they are even when the API is misconfigured. */
+export async function resolvePlaceName(
+  lat: number, lon: number, language = "en",
+): Promise<string | null> {
+  try {
+    const p = await api.reverseGeocode(lat, lon, language);
+    if (p?.name) return p.label || p.name;
+  } catch { /* backend unreachable — try direct */ }
+
+  try {
+    const r = await fetch(
+      "https://api.bigdatacloud.net/data/reverse-geocode-client" +
+        `?latitude=${lat}&longitude=${lon}&localityLanguage=${encodeURIComponent(language)}`,
+    );
+    if (!r.ok) return null;
+    const d = await r.json();
+    const primary = d.city || d.locality || d.principalSubdivision;
+    if (!primary) return null;
+    const parts = [d.locality || primary, d.principalSubdivision, d.countryName].filter(Boolean);
+    return Array.from(new Set(parts)).join(", ");
+  } catch {
+    return null;
+  }
+}

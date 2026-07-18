@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { api } from "./api";
+import { api, resolvePlaceName } from "./api";
 import type {
   Alert, ChecklistItem, GeoResult, Location, PreparednessPlan, RiskLevel,
   TravelAdvisory, WeatherSnapshot,
@@ -80,13 +80,9 @@ export function LocationSearch({
       async (pos) => {
         const lat = +pos.coords.latitude.toFixed(4);
         const lon = +pos.coords.longitude.toFixed(4);
-        // Resolve coordinates to a readable place name.
-        let name = "My location";
-        try {
-          const place = await api.reverseGeocode(lat, lon, language);
-          if (place?.name) name = place.label || place.name;
-        } catch { /* keep fallback name */ }
-        onSelect({ lat, lon, name });
+        // Resolve coordinates to a readable place name (backend, then direct fallback).
+        const place = await resolvePlaceName(lat, lon, language);
+        onSelect({ lat, lon, name: place || "My location" });
         setLocating(false);
       },
       () => setLocating(false),
